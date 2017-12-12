@@ -15,20 +15,25 @@
 # under the License.
 #
 
+set -eu
+set -o pipefail
+
 # Paths are mandatory from command line
 SUPERUSER=postgres
 DROPFIRST=NO
 DB=itag
 USER=itag
-HOSTNAME=localhost
+PASSWORD=
+HOSTNAME_OPT=
+ROOTDIR=
 usage="## iTag database installation\n\n  Usage $0 -p [itag user password] [-d <PostGIS directory> -s <database SUPERUSER> -F -H <server HOSTNAME>]\n\n  -d : absolute path to the directory containing postgis.sql - If not specified, EXTENSION mechanism will be used\n  -s : database SUPERUSER (default "postgres")\n  -F : WARNING - suppress existing itag database\n  -H : postgres server hostname (default localhost)"
 while getopts "d:s:p:hFH:" options; do
     case $options in
         d ) ROOTDIR=`echo $OPTARG`;;
         s ) SUPERUSER=`echo $OPTARG`;;
         p ) PASSWORD=`echo $OPTARG`;;
-        H ) HOSTNAME=`echo $OPTARG`;;
         F ) DROPFIRST=YES;;
+        H ) HOSTNAME_OPT=`echo "-h "$OPTARG`;;
         h ) echo -e $usage;;
         \? ) echo -e $usage
             exit 1;;
@@ -38,7 +43,8 @@ while getopts "d:s:p:hFH:" options; do
 done
 if [ "$DROPFIRST" = "YES" ]
 then
-    dropdb -U $SUPERUSER $DB -h $HOSTNAME
+    dropdb --if-exists -U $SUPERUSER $HOSTNAME_OPT $DB
+    dropuser --if-exists -U $SUPERUSER $HOSTNAME_OPT $USER
 fi
 if [ "$PASSWORD" = "" ]
 then
@@ -47,30 +53,30 @@ then
 fi
 
 # Create DB
-createdb $DB -U $SUPERUSER -h $HOSTNAME
-createlang -U $SUPERUSER plpgsql $DB -h $HOSTNAME
+createdb -U $SUPERUSER $HOSTNAME_OPT $DB
+createlang -U $SUPERUSER $HOSTNAME_OPT plpgsql $DB || true
 
 # Make db POSTGIS compliant
 if [ "$ROOTDIR" = "" ]
 then
-    psql -d $DB -U $SUPERUSER -h $HOSTNAME -c "CREATE EXTENSION postgis; CREATE EXTENSION postgis_topology;"
+    psql -d $DB -U $SUPERUSER $HOSTNAME_OPT -c "CREATE EXTENSION postgis; CREATE EXTENSION postgis_topology;"
 else
     # Example : $ROOTDIR = /usr/local/pgsql/share/contrib/postgis-1.5/
     postgis=`echo $ROOTDIR/postgis.sql`
     projections=`echo $ROOTDIR/spatial_ref_sys.sql`
-    psql -d $DB -U $SUPERUSER -f $postgis -h $HOSTNAME
-    psql -d $DB -U $SUPERUSER -f $projections -h $HOSTNAME
+    psql -d $DB -U $SUPERUSER -f $postgis $HOSTNAME_OPT
+    psql -d $DB -U $SUPERUSER -f $projections $HOSTNAME_OPT
 
 fi
 
 
 ###### ADMIN ACCOUNT CREATION ######
-psql -U $SUPERUSER -d $DB -h $HOSTNAME << EOF
+psql -U $SUPERUSER -d $DB $HOSTNAME_OPT << EOF
 CREATE USER $USER WITH PASSWORD '$PASSWORD' NOCREATEDB
 EOF
 
 # Create unaccent function
-psql -U $SUPERUSER -d $DB -h $HOSTNAME << EOF
+psql -U $SUPERUSER -d $DB $HOSTNAME_OPT << EOF
 
 --
 -- Use unaccent function from postgresql >= 9
@@ -154,7 +160,7 @@ END
 EOF
 
 # Rights
-psql -U $SUPERUSER -d $DB -h $HOSTNAME << EOF
+psql -U $SUPERUSER -d $DB $HOSTNAME_OPT << EOF
 ALTER DATABASE $DB OWNER TO $USER;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT ALL ON geometry_columns to $USER;

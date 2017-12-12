@@ -15,11 +15,16 @@
 # under the License.
 #
 
+set -eu
+set -o pipefail
+
 # Paths are mandatory from command line
+DATADIR=
 SUPERUSER=postgres
+DROPFIRST=NO
 DB=itag
 USER=itag
-HOSTNAME=
+HOSTNAME_OPT=
 usage="## iTag data sources installation\n\n  Usage $0 -D <data directory> [-d <database name> -s <database SUPERUSER> -u <database USER> -F -H <server HOSTNAME>]\n\n  -D : absolute path to the data directory containing countries,continents,etc.\n  -s : database SUPERUSER (default "postgres")\n  -u : database USER (default "itag")\n  -d : database name (default "itag")\n  -H : postgres server hostname (default localhost)\n  -F : drop schema datasources first\n"
 while getopts "D:d:s:u:H:hF" options; do
     case $options in
@@ -27,7 +32,7 @@ while getopts "D:d:s:u:H:hF" options; do
         d ) DB=`echo $OPTARG`;;
         u ) USER=`echo $OPTARG`;;
         s ) SUPERUSER=`echo $OPTARG`;;
-        H ) HOSTNAME=`echo "-h "$OPTARG`;;
+        H ) HOSTNAME_OPT=`echo "-h "$OPTARG`;;
         h ) echo -e $usage;;
         F ) DROPFIRST=YES;;
         \? ) echo -e $usage
@@ -62,31 +67,31 @@ MARINEAREAS=$DATADIR/ne_10m_geography_marine_polys.shp
 ##### DROP SCHEMA FIRST ######
 if [ "$DROPFIRST" = "YES" ]
 then
-psql -d $DB -U $SUPERUSER << EOF
+psql -d $DB -U $SUPERUSER $HOSTNAME_OPT << EOF
 DROP SCHEMA IF EXISTS datasources CASCADE;
 DROP SCHEMA IF EXISTS gpw CASCADE;
 EOF
 fi
 
-psql -d $DB -U $SUPERUSER << EOF
+psql -d $DB -U $SUPERUSER $HOSTNAME_OPT << EOF
 CREATE SCHEMA datasources;
 EOF
 
 # ================== ALWAYS =====================
 ## Insert Coastlines
-shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $COASTLINES datasources.coastlines | psql -d $DB -U $SUPERUSER $HOSTNAME
-psql -d $DB  -U $SUPERUSER $HOSTNAME << EOF
+shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $COASTLINES datasources.coastlines | psql -d $DB -U $SUPERUSER $HOSTNAME_OPT
+psql -d $DB  -U $SUPERUSER $HOSTNAME_OPT << EOF
 CREATE INDEX idx_coastlines_geom ON datasources.coastlines USING gist(geom);
 EOF
 
 # ================== POLITICAL =====================
 
 ## Insert Continents
-shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $CONTINENTS datasources.continents | psql -d $DB -U $SUPERUSER $HOSTNAME
+shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $CONTINENTS datasources.continents | psql -d $DB -U $SUPERUSER $HOSTNAME_OPT
 
 ## Insert Countries
-shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $COUNTRIES datasources.countries | psql -d $DB -U $SUPERUSER $HOSTNAME
-psql -d $DB  -U $SUPERUSER $HOSTNAME << EOF
+shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $COUNTRIES datasources.countries | psql -d $DB -U $SUPERUSER $HOSTNAME_OPT
+psql -d $DB  -U $SUPERUSER $HOSTNAME_OPT << EOF
 ALTER TABLE datasources.countries ALTER COLUMN name TYPE TEXT;
 UPDATE datasources.countries set name='Antigua and Barbuda' WHERE iso_a3 = 'ATG';
 UPDATE datasources.countries set name='Ashmore and Cartier Islands' WHERE name = 'Ashmore and Cartier Is.';
@@ -142,8 +147,8 @@ CREATE INDEX idx_countries_geom ON datasources.countries USING gist(geom);
 EOF
 
 ## World administrative level 1 (i.e. states for USA, departements for France)
-shp2pgsql -g geom -d -W UTF8 -s 4326 -I $STATES datasources.states | psql -d $DB -U $SUPERUSER $HOSTNAME
-psql -d $DB -U $SUPERUSER  $HOSTNAME << EOF
+shp2pgsql -g geom -d -W UTF8 -s 4326 -I $STATES datasources.states | psql -d $DB -U $SUPERUSER $HOSTNAME_OPT
+psql -d $DB -U $SUPERUSER  $HOSTNAME_OPT << EOF
 UPDATE datasources.states SET name='Seine-et-Marne' WHERE name='Seien-et-Marne';
 CREATE INDEX idx_states_geom ON datasources.states USING gist(geom);
 CREATE INDEX idx_states_name ON datasources.states (normalize(name));
@@ -151,7 +156,7 @@ CREATE INDEX idx_states_region ON datasources.states (normalize(region));
 EOF
 
 ## Regions created from states table
-psql -d $DB -U $SUPERUSER $HOSTNAME << EOF
+psql -d $DB -U $SUPERUSER $HOSTNAME_OPT << EOF
 --
 -- Some explanation here
 --
@@ -167,11 +172,11 @@ EOF
 
 # =================== GEOLOGY ==================
 ## Insert plates
-shp2pgsql -g geom -d -W UTF8 -s 4326 -I $PLATES datasources.plates | psql -d $DB -U $SUPERUSER $HOSTNAME
+shp2pgsql -g geom -d -W UTF8 -s 4326 -I $PLATES datasources.plates | psql -d $DB -U $SUPERUSER $HOSTNAME_OPT
 
 ## Insert faults
-shp2pgsql -g geom -d -W UTF8 -s 4326 -I $FAULTS datasources.faults | psql -d $DB -U $SUPERUSER $HOSTNAME
-psql -d $DB  -U $SUPERUSER $HOSTNAME << EOF
+shp2pgsql -g geom -d -W UTF8 -s 4326 -I $FAULTS datasources.faults | psql -d $DB -U $SUPERUSER $HOSTNAME_OPT
+psql -d $DB  -U $SUPERUSER $HOSTNAME_OPT << EOF
 DELETE FROM datasources.faults WHERE type IS NULL;
 UPDATE datasources.faults set type='Thrust fault' WHERE type='thrust-fault';
 UPDATE datasources.faults set type='step' WHERE type='Step';
@@ -180,19 +185,19 @@ UPDATE datasources.faults set type='Rift' WHERE type='rift';
 EOF
 
 ## Insert volcanoes
-shp2pgsql -g geom -d -W UTF8 -s 4326 -I $VOLCANOES datasources.volcanoes | psql -d $DB -U $SUPERUSER $HOSTNAME
+shp2pgsql -g geom -d -W UTF8 -s 4326 -I $VOLCANOES datasources.volcanoes | psql -d $DB -U $SUPERUSER $HOSTNAME_OPT
 
 ## Insert glaciers
-shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $GLACIERS datasources.glaciers | psql -d $DB -U $SUPERUSER $HOSTNAME
+shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $GLACIERS datasources.glaciers | psql -d $DB -U $SUPERUSER $HOSTNAME_OPT
 
 # =================== HYDROLOGY ==================
 ## Insert Rivers
-shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $RIVERS datasources.rivers | psql -d $DB -U $SUPERUSER $HOSTNAME
+shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $RIVERS datasources.rivers | psql -d $DB -U $SUPERUSER $HOSTNAME_OPT
 
 # =================== OTHER ==================
 ## Insert Physicals data
-shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $MARINEAREAS datasources.physical | psql -d $DB -U $SUPERUSER $HOSTNAME
-psql -d $DB  -U $SUPERUSER $HOSTNAME << EOF
+shp2pgsql -g geom -d -W LATIN1 -s 4326 -I $MARINEAREAS datasources.physical | psql -d $DB -U $SUPERUSER $HOSTNAME_OPT
+psql -d $DB  -U $SUPERUSER $HOSTNAME_OPT << EOF
 DELETE FROM datasources.physical WHERE name IS NULL;
 UPDATE datasources.physical set name='Arctic Ocean',name_fr='Océan Arctique' WHERE name='ARCTIC OCEAN';
 UPDATE datasources.physical set name='Beaufort Sea' WHERE name='Beaufort  Sea';
@@ -228,7 +233,7 @@ CREATE INDEX idx_physical_name ON datasources.physical (normalize(name));
 EOF
 
 # ==================== LANDCOVER =====================
-psql -U $SUPERUSER -d $DB $HOSTNAME << EOF
+psql -U $SUPERUSER -d $DB $HOSTNAME_OPT << EOF
 CREATE TABLE datasources.landcover (
     ogc_fid         SERIAL,
     dn              INTEGER
@@ -238,7 +243,7 @@ CREATE INDEX landcover_geometry_idx ON datasources.landcover USING gist (wkb_geo
 EOF
 
 # =================== GPW ============================
-psql -U $SUPERUSER -d $DB $HOSTNAME << EOF
+psql -U $SUPERUSER -d $DB $HOSTNAME_OPT << EOF
 CREATE SCHEMA gpw;
 CREATE TABLE gpw.glp15ag60 (
     gid                 VARCHAR(8) PRIMARY KEY,
@@ -275,7 +280,7 @@ SELECT AddGeometryColumn('gpw', 'glp15ag','footprint','4326','POLYGON',2);
 EOF
 
 # GRANT RIGHTS TO itag USER
-psql -U $SUPERUSER -d $DB $HOSTNAME << EOF
+psql -U $SUPERUSER -d $DB $HOSTNAME_OPT << EOF
 GRANT ALL ON SCHEMA datasources to $USER;
 GRANT SELECT on datasources.coastlines to $USER;
 GRANT SELECT ON datasources.coastlines_gid_seq TO $USER;
