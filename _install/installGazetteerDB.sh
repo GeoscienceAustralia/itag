@@ -15,18 +15,24 @@
 # under the License.
 #
 
+set -eu
+set -o pipefail
+
 # Paths are mandatory from command line
+DATADIR=
 SUPERUSER=postgres
 DROPFIRST=NO
 DB=itag
 USER=itag
+HOSTNAME_OPT=
 usage="## iTag Gazetteer installation\n\n  Usage $0 -D <data directory> [-d <database name> -s <database SUPERUSER> -F]\n\n  -D : absolute path to the data directory containing geonames data (i.e. allCountries.zip, alternateNames.zip).\n  -s : database SUPERUSER ($SUPERUSER)\n  -d : database name ($DB)\n  -F : drop schema gazetteer first\n"
-while getopts "D:d:s:u:hF" options; do
+while getopts "D:d:s:u:hFH:" options; do
     case $options in
         D ) DATADIR=`echo $OPTARG`;;
         d ) DB=`echo $OPTARG`;;
         s ) SUPERUSER=`echo $OPTARG`;;
         F ) DROPFIRST=YES;;
+        H ) HOSTNAME_OPT=`echo "-h "$OPTARG`;;
         h ) echo -e $usage;;
         \? ) echo -e $usage
             exit 1;;
@@ -43,7 +49,7 @@ fi
 ##### DROP SCHEMA FIRST ######
 if [ "$DROPFIRST" = "YES" ]
 then
-psql -d $DB -U $SUPERUSER << EOF
+psql -d $DB -U $SUPERUSER $HOSTNAME_OPT << EOF
 DROP SCHEMA IF EXISTS gazetteer CASCADE;
 EOF
 fi
@@ -51,7 +57,7 @@ fi
 # ======================================================
 ## Insert Cities from Geonames
 # See https://github.com/colemanm/gazetteer/blob/master/docs/geonames_postgis_import.md
-psql -d $DB -U $SUPERUSER << EOF
+psql -d $DB -U $SUPERUSER $HOSTNAME_OPT << EOF
 CREATE schema gazetteer;
 CREATE TABLE gazetteer.geoname (
     geonameid int,
@@ -84,13 +90,15 @@ CREATE TABLE gazetteer.alternatename (
     isColloquial boolean,
     isHistoric boolean
  );
+EOF
 
--- Toponyms (english)
-COPY gazetteer.geoname (geonameid,name,asciiname,alternatenames,latitude,longitude,fclass,fcode,country,cc2,admin1,admin2,admin3,admin4,population,elevation,gtopo30,timezone,moddate) FROM '$DATADIR/allCountries.txt' NULL AS '' ENCODING 'UTF8';
+# -- Toponyms (english)
+psql -d $DB -U $SUPERUSER $HOSTNAME_OPT -c "COPY gazetteer.geoname (geonameid,name,asciiname,alternatenames,latitude,longitude,fclass,fcode,country,cc2,admin1,admin2,admin3,admin4,population,elevation,gtopo30,timezone,moddate) FROM STDIN NULL AS '' ENCODING 'UTF8';" <$DATADIR/allCountries.txt
 
--- Toponyms (other languages) 
-COPY gazetteer.alternatename (alternatenameid,geonameid,isolanguage,alternatename,ispreferredname,isshortname,iscolloquial,ishistoric) from '$DATADIR/alternateNames.txt' NULL AS '' ENCODING 'UTF8';
+# -- Toponyms (other languages)
+psql -d $DB -U $SUPERUSER $HOSTNAME_OPT -c "COPY gazetteer.alternatename (alternatenameid,geonameid,isolanguage,alternatename,ispreferredname,isshortname,iscolloquial,ishistoric) FROM STDIN NULL AS '' ENCODING 'UTF8';" <$DATADIR/alternateNames.txt
 
+psql -d $DB -U $SUPERUSER $HOSTNAME_OPT << EOF
 -- We only need Populated place and administrative areas
 CREATE INDEX idx_fclass_country ON gazetteer.geoname (fclass);
 -- DELETE FROM gazetteer.geoname WHERE fclass NOT IN ('P', 'A');
